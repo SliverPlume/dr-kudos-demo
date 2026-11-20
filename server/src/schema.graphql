@@ -1,0 +1,138 @@
+# ---------------------------------------------------------------------------
+# Dr. Kudos chat — GraphQL schema
+#
+# The local server uses HTTP POST /graphql for queries and mutations, and
+# graphql-transport-ws for subscriptions backed by an in-process PubSub.
+# An AppSync deployment requires its own transport, authorization, resolvers,
+# and mutation-triggered subscriptions. The notes below outline that mapping;
+# they are not an implemented AWS integration. See README for migration details.
+# ---------------------------------------------------------------------------
+
+enum Sender {
+  PATIENT
+  AI
+  STAFF
+  SYSTEM
+}
+
+enum MessageStatus {
+  "Persisted by the server (one tick)."
+  SENT
+  "Received by another device; independent of readAt."
+  DELIVERED
+}
+
+enum ReaderRole {
+  PATIENT
+  STAFF
+}
+
+enum ConversationMode {
+  "The AI assistant (LLM, or scripted replies when no API key is set) answers the patient."
+  AI
+  "A clinic staff member has taken over; AI replies are paused."
+  STAFF
+}
+
+type Translation {
+  lang: String!
+  text: String!
+  "False when neither the phrase dictionary nor the LLM produced a translation."
+  translated: Boolean!
+}
+
+type Message {
+  id: ID!
+  "Client-generated idempotency key; lets the sender reconcile its optimistic copy."
+  clientId: ID
+  "Monotonic sequence number, used as the pagination cursor."
+  seq: Int!
+  conversationId: ID!
+  sender: Sender!
+  senderName: String
+  senderDeviceId: String
+  text: String!
+  createdAt: String!
+  status: MessageStatus!
+  deliveredAt: String
+  "Confirmed visible to the opposite role, or covered by a saved AI reply."
+  readAt: String
+  "Phrase dictionary, then LLM translation (patient messages only), cached in SQLite."
+  translation(lang: String!): Translation!
+}
+
+type VisitSummary {
+  date: String!
+  treatment: String!
+  clinician: String!
+}
+
+type Conversation {
+  latestVisit: VisitSummary
+  id: ID!
+  patientName: String!
+  mode: ConversationMode!
+  staffName: String
+  "True while the server is waiting to post an AI reply."
+  aiTyping: Boolean!
+  lastMessage: Message
+  updatedAt: String!
+}
+
+type MessagePage {
+  "Oldest first."
+  items: [Message!]!
+  hasMore: Boolean!
+}
+
+type Language {
+  code: String!
+  label: String!
+}
+
+input SendMessageInput {
+  conversationId: ID!
+  clientId: ID!
+  text: String!
+  deviceId: String!
+}
+
+type Query {
+  conversations: [Conversation!]!
+  conversation(id: ID!): Conversation
+  "Cursor pagination: pass the smallest seq you already have to get older messages."
+  messages(conversationId: ID!, beforeSeq: Int, limit: Int): MessagePage!
+  languages: [Language!]!
+}
+
+type Mutation {
+  "Patient sends a message. Idempotent on clientId (safe to retry)."
+  sendMessage(input: SendMessageInput!): Message!
+  "Clinic staff replies (only while the conversation is in STAFF mode)."
+  sendStaffMessage(input: SendMessageInput!, staffName: String!): Message!
+  "Transport receipt only; does not confirm reading."
+  markDelivered(messageId: ID!, deviceId: String!): Message!
+  "Returns changed messages only. Reader role is not authenticated in this demo."
+  markMessagesRead(conversationId: ID!, messageIds: [ID!]!, readerRole: ReaderRole!): [Message!]!
+  takeOver(conversationId: ID!, staffName: String!): Conversation!
+  handBack(conversationId: ID!): Conversation!
+
+  # Not exposed locally (called server-side only). In AppSync these would be
+  # IAM-authorised mutations invoked by the AI Lambda so that subscriptions fire:
+  #   createAiReply(conversationId: ID!, text: String!): Message!   @aws_iam
+  #   setAiTyping(conversationId: ID!, typing: Boolean!): Conversation! @aws_iam
+}
+
+type Subscription {
+  # All arguments are optional filters (as in AppSync): the clinic console omits
+  # them to receive events for every conversation; the phone passes its own id.
+
+  # @aws_subscribe(mutations: ["sendMessage", "sendStaffMessage", "createAiReply"])
+  onMessageAdded(conversationId: ID): Message!
+
+  # AppSync needs a per-message publishing mutation for batched read updates.
+  onMessageUpdated(conversationId: ID): Message!
+
+  # @aws_subscribe(mutations: ["setAiTyping", "takeOver", "handBack"])
+  onConversationUpdated(id: ID): Conversation!
+}

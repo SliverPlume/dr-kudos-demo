@@ -1,0 +1,29 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "",
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --watch src/index.ts",
+    "start": "node --env-file-if-exists=.env src/index.ts",
+    "reset": "rm -f data.sqlite data.sqlite-*",
+    "typecheck": "tsc --noEmit",
+    "smoke": "node scripts/smoke.ts",
+    "fixture:reconnect": "node scripts/reconnect-fixture.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "graphql": "^17.0.2",
+    "graphql-ws": "^6.4.2",
+    "graphql-yoga": "^6.1.0",
+    "ws": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/ws": "^8.18.2",
+    "typescript": "^7.0.2"
+  },
+  "private": true
+}
